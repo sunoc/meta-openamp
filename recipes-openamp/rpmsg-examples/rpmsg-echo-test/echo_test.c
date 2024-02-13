@@ -24,6 +24,11 @@
 #include <fcntl.h>
 #include <string.h>
 #include <linux/rpmsg.h>
+#include <limits.h>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <stdalign.h>
 
 struct _payload {
 	unsigned long num;
@@ -47,6 +52,16 @@ struct _payload *r_payload;
 #define NUM_PAYLOADS		(PAYLOAD_MAX_SIZE/PAYLOAD_MIN_SIZE)
 
 #define RPMSG_BUS_SYS "/sys/bus/rpmsg"
+
+#define NUM_GPIO 4
+#define BIT_GPIO 8
+#define gpio_base 0xa0000000
+
+struct GPIO_t {
+  alignas(0x200) unsigned long int data;
+} gpio_struct ;
+
+#define gpio_size sizeof(gpio_struct) * NUM_GPIO
 
 static int rpmsg_create_ept(int rpfd, struct rpmsg_endpoint_info *eptinfo)
 {
@@ -157,8 +172,7 @@ static int get_rpmsg_chrdev_fd(const char *rpmsg_dev_name,
 		return -EINVAL;
 	}
 	while ((ent = readdir(dir)) != NULL) {
-		if (!strncmp(ent->d_name, rpmsg_ctrl_prefix,
-			    strlen(rpmsg_ctrl_prefix))) {
+		if (!strncmp(ent->d_name, rpmsg_ctrl_prefix, 10)) {
 			printf("Opening file %s.\n", ent->d_name);
 			sprintf(fpath, "/dev/%s", ent->d_name);
 			fd = open(fpath, O_RDWR | O_NONBLOCK);
@@ -190,6 +204,31 @@ int main(int argc, char *argv[])
 	struct rpmsg_endpoint_info eptinfo;
 	char ept_dev_name[16];
 	char ept_dev_path[32];
+	int gpio_fd;
+	struct GPIO_t * gpio;
+
+	gpio_fd = open("/dev/mem", O_RDWR | O_SYNC);
+	if (gpio_fd <= 0)
+	  {
+	    fprintf(stderr, "gpio fd open error, %s %s\n",
+			fpath, strerror(errno));
+	    exit(EXIT_FAILURE);
+	  }
+	printf("/dev/mem opened. gpio_fd:%d\r\n", gpio_fd);
+
+
+	gpio = &gpio_struct;
+	gpio = mmap(NULL, gpio_size, PROT_READ|PROT_WRITE, MAP_SHARED,
+		    gpio_fd, gpio_base);
+
+	if (NULL == gpio)
+	  {
+	    fprintf(stderr, "mmap error, %s %s\n",
+			fpath, strerror(errno));
+	    close(gpio_fd);
+	    exit(EXIT_FAILURE);
+	  }
+	printf("mmap gpio:%p\r\n", gpio);
 
 
 	while ((opt = getopt(argc, argv, "d:n:")) != -1) {
@@ -274,9 +313,10 @@ int main(int argc, char *argv[])
 			memset(&(i_payload->data[0]), 0xA5, size);
 
 			printf("\r\n sending payload number");
-			printf(" %ld of size %d\r\n", i_payload->num,
+			printf(" %ld of size %lu\r\n", i_payload->num,
 			(2 * sizeof(unsigned long)) + size);
 
+			gpio[1].data = 0x01;
 			bytes_sent = write(fd, i_payload,
 			(2 * sizeof(unsigned long)) + size);
 
@@ -291,10 +331,10 @@ int main(int argc, char *argv[])
 			bytes_rcvd = read(fd, r_payload,
 					(2 * sizeof(unsigned long)) + PAYLOAD_MAX_SIZE);
 			while (bytes_rcvd <= 0) {
-				usleep(10000);
 				bytes_rcvd = read(fd, r_payload,
 					(2 * sizeof(unsigned long)) + PAYLOAD_MAX_SIZE);
 			}
+			gpio[1].data = 0x00;
 			printf(" received payload number ");
 			printf("%ld of size %d\r\n", r_payload->num, bytes_rcvd);
 
@@ -323,6 +363,7 @@ int main(int argc, char *argv[])
 	free(i_payload);
 	free(r_payload);
 
+	close(gpio_fd);
 	close(fd);
 	if (charfd >= 0)
 		close(charfd);
