@@ -3,6 +3,14 @@ meta-openamp
 
 This layer provides support for building libmetal and OpenAMP libraries.
 
+[FORK] GPIO
+------------
+
+The purpose of this fork is to toggle some GPIO pins of the KR260 board while
+trying to send the "echo" messages as fast as possible.
+
+I try to measure the best case scenario for RPMsg replies.
+
 Dependencies
 ------------
 This layer depends on:
