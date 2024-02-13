@@ -51,6 +51,9 @@ struct _payload *r_payload;
 
 #define RPMSG_BUS_SYS "/sys/bus/rpmsg"
 
+#define PR_DBG(fmt, args ...) printf("%s():%u "fmt, __func__, __LINE__, ##args)
+#define SHUTDOWN_MSG    0xEF56A55A
+
 #define NUM_GPIO 4
 #define BIT_GPIO 8
 #define gpio_base 0xa0000000
@@ -61,7 +64,24 @@ struct GPIO_t {
 
 #define gpio_size sizeof(gpio_struct) * NUM_GPIO
 
-static int rpmsg_create_ept(int rpfd, struct rpmsg_endpoint_info *eptinfo)
+void send_shutdown(int fd)
+{
+	union {
+		unsigned int n[8];
+		struct _payload sdown;
+	} umsg = {
+		.n = {
+			SHUTDOWN_MSG, SHUTDOWN_MSG, SHUTDOWN_MSG, SHUTDOWN_MSG,
+			SHUTDOWN_MSG, SHUTDOWN_MSG, SHUTDOWN_MSG, SHUTDOWN_MSG,
+		}
+	};
+
+	umsg.sdown.size = sizeof(umsg);
+	if (write(fd, &umsg, sizeof(umsg)) < 0)
+		perror("write SHUTDOWN_MSG\n");
+}
+
+int rpmsg_create_ept(int rpfd, struct rpmsg_endpoint_info *eptinfo)
 {
 	int ret;
 
@@ -247,14 +267,14 @@ int main(int argc, char *argv[])
 	};
 	char ept_dev_name[16];
 	char ept_dev_path[32];
+
 	int gpio_fd;
 	struct GPIO_t * gpio;
 
 	gpio_fd = open("/dev/mem", O_RDWR | O_SYNC);
 	if (gpio_fd <= 0)
 	  {
-	    fprintf(stderr, "gpio fd open error, %s %s\n",
-			fpath, strerror(errno));
+	    perror("gpio fd open error\r\n");
 	    exit(EXIT_FAILURE);
 	  }
 	printf("/dev/mem opened. gpio_fd:%d\r\n", gpio_fd);
@@ -266,12 +286,11 @@ int main(int argc, char *argv[])
 
 	if (NULL == gpio)
 	  {
-	    fprintf(stderr, "mmap error, %s %s\n",
-			fpath, strerror(errno));
+	    printf("mmap error\r\n");
 	    close(gpio_fd);
 	    exit(EXIT_FAILURE);
 	  }
-	printf("mmap gpio:%p\r\n", gpio);
+	printf("mmap gpio:%p\n", gpio);
 
 	printf("\r\n Echo test start \r\n");
 
@@ -381,6 +400,7 @@ int main(int argc, char *argv[])
 			bytes_rcvd = read(fd, r_payload,
 					(2 * sizeof(unsigned long)) + PAYLOAD_MAX_SIZE);
 			while (bytes_rcvd <= 0) {
+				usleep(1);
 				bytes_rcvd = read(fd, r_payload,
 					(2 * sizeof(unsigned long)) + PAYLOAD_MAX_SIZE);
 			}
@@ -414,7 +434,6 @@ int main(int argc, char *argv[])
 	free(i_payload);
 	free(r_payload);
 
-	close(gpio_fd);
 	close(fd);
 	if (charfd >= 0)
 		close(charfd);
